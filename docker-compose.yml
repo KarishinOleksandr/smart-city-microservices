@@ -1,0 +1,91 @@
+version: '3.8'
+
+services:
+  storage-service:
+    build:
+      context: .
+      dockerfile: storage_service/Dockerfile
+    container_name: smartcity-storage
+    ports:
+      - "8003:8003"
+    environment:
+      - PORT=8003
+      - COSMOS_ENDPOINT=${COSMOS_ENDPOINT:-}
+      - COSMOS_KEY=${COSMOS_KEY:-}
+      - COSMOS_DATABASE=SmartCityDB
+      - COSMOS_CONTAINER=TelemetryReadings
+    networks:
+      - smartcity-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  processing-service:
+    build:
+      context: .
+      dockerfile: processing_service/Dockerfile
+    container_name: smartcity-processor
+    ports:
+      - "8002:8002"
+    environment:
+      - PORT=8002
+      - TH_PM25_WARN=50.0
+      - TH_PM25_CRIT=150.0
+      - TH_CO2_WARN=1200.0
+      - TH_NOISE_WARN=80.0
+      - TH_CONGESTION_CRIT=75.0
+      - TH_SPEED_LOW=15.0
+    networks:
+      - smartcity-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  ingestion-service:
+    build:
+      context: .
+      dockerfile: ingestion_service/Dockerfile
+    container_name: smartcity-ingestion
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+      - PROCESSING_SERVICE_URL=http://processing-service:8002/api/events
+      - STORAGE_SERVICE_URL=http://storage-service:8003/api/telemetry
+      - FORWARD_WORKERS=4
+    depends_on:
+      - storage-service
+      - processing-service
+    networks:
+      - smartcity-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  sensor-simulator:
+    build:
+      context: .
+      dockerfile: sensor_simulator/Dockerfile
+    container_name: smartcity-simulator
+    environment:
+      - INGESTION_URL=http://ingestion-service:8001/api/telemetry
+      - PUBLISH_INTERVAL_SEC=0.3
+      - TOTAL_MESSAGES=0
+    depends_on:
+      - ingestion-service
+    networks:
+      - smartcity-net
+    restart: unless-stopped
+
+networks:
+  smartcity-net:
+    driver: bridge
